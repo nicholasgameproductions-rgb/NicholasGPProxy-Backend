@@ -143,6 +143,35 @@ async function handleFeatures(req,res,u,origin) {
   return false;
 }
 
+// NicholasGPProxy Arcade: rebranded catalog imported from user-supplied DuckMath source.
+const fs = require('node:fs');
+const path = require('node:path');
+const GAME_CATALOG = JSON.parse(fs.readFileSync(path.join(__dirname,'games.json'),'utf8'));
+const GAMES_HTML = fs.readFileSync(path.join(__dirname,'games.html'),'utf8');
+const GAME_BY_ID = new Map(GAME_CATALOG.map(g=>[g.id,g]));
+function catalogRoutes(req,res,u,origin){
+  const p=u.pathname;
+  if(req.method!=='GET') return false;
+  if(p==='/games'||p==='/games/'||/^\/games\/[a-z0-9-]+\/?$/.test(p)){
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});
+    res.end(GAMES_HTML);return true;
+  }
+  if(p==='/api/games'){
+    const q=(u.searchParams.get('q')||'').trim().toLowerCase();
+    const cat=(u.searchParams.get('category')||'').trim().toLowerCase();
+    const list=GAME_CATALOG.filter(g=>(!q||g.name.toLowerCase().includes(q))&&(!cat||g.category.toLowerCase()===cat));
+    res.writeHead(200,{...cors(origin),'Cache-Control':'public, max-age=60'});
+    res.end(JSON.stringify({games:list,total:list.length}));return true;
+  }
+  let m=p.match(/^\/api\/games\/([a-z0-9-]+)$/);
+  if(m){const g=GAME_BY_ID.get(m[1]);if(!g){res.writeHead(404,cors(origin));res.end(JSON.stringify({error:'Game not found'}));return true;}
+    res.writeHead(200,cors(origin));res.end(JSON.stringify({meta:g,type:'embed',url:g.url,thumb:g.thumb,play:`${u.origin}/games/${g.id}`}));return true;}
+  m=p.match(/^\/api\/games\/play\/([a-z0-9-]+)$/);
+  if(m){const g=GAME_BY_ID.get(m[1]);if(!g){res.writeHead(404,cors(origin));res.end(JSON.stringify({error:'Game not found'}));return true;}
+    res.writeHead(302,{'Location':`/games/${encodeURIComponent(g.id)}`});res.end();return true;}
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
   const headers = cors(origin);
@@ -150,6 +179,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {res.writeHead(204, headers); return res.end();}
   if (origin && !ORIGINS.has(origin)) return write({ error: 'Origin not allowed' }, 403);
   const u = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
+  if (catalogRoutes(req,res,u,origin)) return;
   if (await handleFeatures(req,res,u,origin) !== false) return;
   if (u.pathname === '/' || u.pathname === '/api/ping') return write({ok:true,service:'NicholasGPProxy',relay:'amr-v1',host:'render',version:'fast-games-ai-1',games:true,ai:!!process.env.OPENAI_API_KEY});
   if (u.pathname === '/api/ac') {
